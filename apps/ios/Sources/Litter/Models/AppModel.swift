@@ -199,6 +199,7 @@ final class AppModel {
         self.serverBridge = serverBridge ?? bridges.serverBridge
         self.ssh = ssh ?? bridges.ssh
         self.reconnectController = reconnectController ?? bridges.reconnectController
+        self.client.setDevTunnelCredentialStore(storage: SwiftDevTunnelCredentialStore.shared)
 
         let sshTrustStore = TerminalSshTrustStore(backend: SwiftSshTrustBackend.shared)
         self.serverBridge.setSshTrustStore(store: sshTrustStore)

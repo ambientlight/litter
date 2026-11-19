@@ -320,6 +320,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sigkitten.litter.watch
+        LITTER_COMPANION_BUNDLE_IDENTIFIER: com.sigkitten.litter
         INFOPLIST_FILE: Sources/LitterWatch/Info.plist
         TARGETED_DEVICE_FAMILY: "4"
         WATCHOS_DEPLOYMENT_TARGET: "11.0"

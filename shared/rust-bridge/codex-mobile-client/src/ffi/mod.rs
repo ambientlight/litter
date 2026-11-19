@@ -8,6 +8,7 @@ pub(crate) mod alleycat;
 mod android;
 mod app_store;
 mod client;
+mod dev_tunnels;
 mod errors;
 mod parser;
 mod reconnect;

@@ -271,6 +271,7 @@ maybe_generate_swift_bindings() {
     [ -f "$GENERATED_SWIFT_DIR/codex_mobile_clientFFI.h" ] &&
     [ -f "$UNIFFI_OUT" ]; then
     echo "==> Swift bindings unchanged; reusing generated output"
+    copy_if_changed "$GENERATED_SWIFT_DIR/codex_mobile_client.swift" "$UNIFFI_OUT"
     sync_generated_headers
     return
   fi

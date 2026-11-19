@@ -1160,6 +1160,51 @@ pub enum Account {
     #[serde(rename = "chatgpt")]
     #[serde(rename_all = "camelCase")]
     Chatgpt { email: String, plan_type: PlanType },
+    External {
+        provider: String,
+        identity: Option<String>,
+    },
+}
+
+/// Mobile-owned account decoding keeps a newer host's provider identity
+/// without pretending it is an OpenAI API-key or ChatGPT login.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AccountReadResponse {
+    #[serde(deserialize_with = "decode_account_identity")]
+    pub account: Option<Account>,
+    pub requires_openai_auth: bool,
+}
+
+fn decode_account_identity<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Account>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    let kind = value["type"]
+        .as_str()
+        .ok_or_else(|| serde::de::Error::custom("missing account type"))?;
+    if matches!(kind, "apiKey" | "chatgpt" | "amazonBedrock") {
+        return serde_json::from_value::<upstream::Account>(value)
+            .map(|account| Some(account.into()))
+            .map_err(serde::de::Error::custom);
+    }
+    let provider = match kind {
+        "githubCopilot" => "GitHub Copilot",
+        other => other,
+    }
+    .to_string();
+    let identity = ["login", "username", "email"]
+        .into_iter()
+        .find_map(|field| {
+            value[field]
+                .as_str()
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        });
+    Ok(Some(Account::External { provider, identity }))
 }
 
 impl From<upstream::Account> for Account {

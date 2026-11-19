@@ -15,6 +15,7 @@ extension AppServerSnapshot {
     }
 
     var connectionModeLabel: String {
+        if devTunnel != nil { return "Dev Tunnel" }
         guard !isLocal else { return "local" }
         return "remote"
     }

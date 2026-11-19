@@ -9,6 +9,8 @@ pub mod adapter;
 /// Errors from transport operations.
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
+    #[error(transparent)]
+    DevTunnel(#[from] crate::dev_tunnels::DevTunnelError),
     #[error("connection failed: {0}")]
     ConnectionFailed(String),
     #[error("send failed: {0}")]
@@ -26,6 +28,10 @@ pub enum TransportError {
 /// RPC-level errors.
 #[derive(Debug, thiserror::Error)]
 pub enum RpcError {
+    #[error(
+        "The connection was lost before the operation was confirmed. Refresh the conversation before trying again."
+    )]
+    OutcomeUnknown,
     #[error("transport error: {0}")]
     Transport(#[from] TransportError),
     #[error("server error {code}: {message}")]

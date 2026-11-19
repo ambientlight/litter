@@ -1823,7 +1823,12 @@ private struct HomeNavigationView: View {
     }
 
     private func disconnectServer(_ serverId: String) {
-        SavedServerStore.remove(serverId: serverId)
+        do {
+            try SavedServerStore.remove(serverId: serverId, client: appModel.client)
+        } catch {
+            actionErrorMessage = devTunnelMessage(error)
+            return
+        }
         Task { await SshSessionStore.shared.close(serverId: serverId, ssh: appModel.ssh) }
         // Remote transport resources are owned by the Rust `ServerSession` and
         // dropped automatically inside `serverBridge.disconnectServer`.

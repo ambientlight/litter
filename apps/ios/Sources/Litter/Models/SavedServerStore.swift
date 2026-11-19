@@ -82,6 +82,17 @@ enum SavedServerStore {
         save(saved)
     }
 
+    /// A late refresh or connect result must not restore a removed profile.
+    @discardableResult
+    static func updateDevTunnel(_ profile: DevTunnelProfile) throws -> Bool {
+        let server = try profile.discoveredServer()
+        var saved = load()
+        guard let index = saved.firstIndex(where: { $0.id == server.id }) else { return false }
+        saved[index] = SavedServer.from(server, rememberedByUser: saved[index].rememberedByUser)
+        save(saved)
+        return true
+    }
+
     static func rememberAlleycat(
         _ server: DiscoveredServer,
         nodeId: String,
@@ -157,8 +168,13 @@ enum SavedServerStore {
         return records
     }
 
-    static func remove(serverId: String) {
+    static func remove(serverId: String, client: AppClient) throws {
         let saved = load()
+        if serverId.hasPrefix("dev-tunnel:") {
+            // Rust owns credential keys and cancels in-flight handshakes before
+            // the platform removes metadata, including malformed profiles.
+            try client.removeDevTunnel(serverId: serverId)
+        }
         let nodeIdsToForget = orphanedAlleycatNodeIds(removing: serverId, from: saved)
         let remaining = saved.filter { $0.id != serverId }
         save(remaining)
@@ -209,6 +225,7 @@ enum SavedServerStore {
             preferredCodexPort: old.preferredCodexPort,
             sshPortForwardingEnabled: old.sshPortForwardingEnabled,
             websocketURL: old.websocketURL,
+            devTunnelProfile: old.devTunnelProfile,
             rememberedByUser: old.rememberedByUser,
             alleycatHost: old.alleycatHost,
             alleycatNodeId: old.alleycatNodeId,
@@ -246,6 +263,7 @@ enum SavedServerStore {
             preferredCodexPort: existing.preferredCodexPort,
             sshPortForwardingEnabled: existing.sshPortForwardingEnabled,
             websocketURL: existing.websocketURL,
+            devTunnelProfile: existing.devTunnelProfile,
             rememberedByUser: existing.rememberedByUser,
             alleycatHost: existing.alleycatHost,
             alleycatNodeId: existing.alleycatNodeId,

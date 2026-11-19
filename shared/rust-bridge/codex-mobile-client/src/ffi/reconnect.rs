@@ -3,7 +3,6 @@
 
 use crate::ffi::shared::{shared_mobile_client, shared_runtime};
 use crate::mobile_client::MobileClient;
-use crate::next_request_id;
 use crate::reconnect::{
     ReconnectResult, SavedServerRecord, SlingshotCredentialProvider, SshCredentialProvider,
     compute_reconnect_plan_with_slingshot, execute_reconnect_plan,
@@ -11,7 +10,6 @@ use crate::reconnect::{
 use crate::session::connection::{InProcessConfig, ServerConfig};
 use crate::store::ServerHealthSnapshot;
 use crate::store::snapshot::AppLifecyclePhaseSnapshot;
-use codex_app_server_protocol as upstream;
 use futures::StreamExt;
 use std::sync::{Arc, RwLock};
 use tokio::runtime::Runtime;
@@ -280,6 +278,7 @@ impl ReconnectController {
     }
 
     pub fn note_app_became_active(&self) {
+        self.inner.dev_tunnels.set_foreground(true);
         self.inner
             .app_store
             .note_app_lifecycle_phase(AppLifecyclePhaseSnapshot::Active);
@@ -331,12 +330,14 @@ impl ReconnectController {
     }
 
     pub fn on_app_became_inactive(&self) {
+        self.inner.dev_tunnels.set_foreground(false);
         self.inner
             .app_store
             .note_app_lifecycle_phase(AppLifecyclePhaseSnapshot::Inactive);
     }
 
     pub fn on_app_entered_background(&self) {
+        self.inner.dev_tunnels.set_foreground(false);
         self.inner
             .app_store
             .note_app_lifecycle_phase(AppLifecyclePhaseSnapshot::Background);
@@ -368,17 +369,9 @@ async fn probe_active_remote_servers_inner(inner: Arc<MobileClient>) {
         .map(|server_id| {
             let inner = Arc::clone(&inner);
             async move {
-                let request = upstream::ClientRequest::GetAccount {
-                    request_id: upstream::RequestId::Integer(next_request_id()),
-                    params: upstream::GetAccountParams {
-                        refresh_token: false,
-                    },
-                };
-                let probe = inner.request_typed_for_server::<upstream::GetAccountResponse>(
-                    &server_id, request,
-                );
+                let probe = inner.sync_server_account(&server_id);
                 match tokio::time::timeout(ACCOUNT_PROBE_TIMEOUT, probe).await {
-                    Ok(Ok(response)) => inner.apply_account_response(&server_id, &response),
+                    Ok(Ok(())) => {}
                     Ok(Err(e)) => warn!(
                         "ReconnectController: probe failed server_id={} error={}",
                         server_id, e
@@ -612,6 +605,23 @@ async fn reconnect_server_inner(
     }
 
     if let Some(snap_server) = snapshot.servers.get(&server_id) {
+        if let Some(status) = &snap_server.dev_tunnel {
+            let result = inner.connect_dev_tunnel(status.profile.clone()).await;
+            return ReconnectResult {
+                server_id,
+                success: result.is_ok(),
+                needs_local_auth_restore: false,
+                error_message: result.err().map(|error| error.to_string()),
+            };
+        }
+        if server_id.starts_with("dev-tunnel:") {
+            return ReconnectResult {
+                server_id,
+                success: false,
+                needs_local_auth_restore: false,
+                error_message: Some(crate::dev_tunnels::DevTunnelError::InvalidProfile.to_string()),
+            };
+        }
         let config = ServerConfig {
             server_id: snap_server.server_id.clone(),
             display_name: snap_server.display_name.clone(),
@@ -661,6 +671,55 @@ mod tests {
     use crate::types::AgentRuntimeInfo;
     use std::collections::HashMap;
 
+    #[tokio::test]
+    async fn foreground_account_probe_preserves_external_provider_identity() {
+        use crate::session::connection::{ServerConfig, ServerSession};
+        let client = Arc::new(crate::mobile_client::MobileClient::new());
+        let config = ServerConfig {
+            server_id: "external-provider".into(),
+            display_name: "Codex".into(),
+            host: "localhost".into(),
+            port: 8390,
+            websocket_url: None,
+            is_local: false,
+            tls: false,
+        };
+        let session = Arc::new(ServerSession::test_stub_with_handlers(
+            config.clone(),
+            Some(Arc::new(|request| {
+                assert_eq!(request.method_name(), "account/read");
+                Ok(serde_json::json!({
+                    "account": { "type": "githubCopilot", "username": "octocat" },
+                    "requiresOpenaiAuth": false
+                }))
+            })),
+            None,
+            None,
+        ));
+        client
+            .sessions
+            .write()
+            .unwrap()
+            .insert(config.server_id.clone(), session.clone());
+        client
+            .app_store
+            .upsert_server(&config, ServerHealthSnapshot::Connected);
+
+        super::probe_active_remote_servers_inner(client.clone()).await;
+
+        let snapshot = client.app_snapshot();
+        let server = &snapshot.servers[&config.server_id];
+        assert_eq!(
+            server.account,
+            Some(crate::types::Account::External {
+                provider: "GitHub Copilot".into(),
+                identity: Some("octocat".into()),
+            })
+        );
+        assert!(!server.requires_openai_auth);
+        session.disconnect().await;
+    }
+
     fn empty_snapshot() -> AppSnapshot {
         AppSnapshot {
             servers: HashMap::new(),
@@ -679,6 +738,8 @@ mod tests {
 
     fn server_with_health(health: ServerHealthSnapshot) -> ServerSnapshot {
         ServerSnapshot {
+            dev_tunnel: None,
+            can_restart_app_server: false,
             server_id: "srv".to_string(),
             display_name: "Test".to_string(),
             host: "127.0.0.1".to_string(),
@@ -741,6 +802,8 @@ mod tests {
         snapshot.servers.insert(
             "local".to_string(),
             ServerSnapshot {
+                dev_tunnel: None,
+                can_restart_app_server: false,
                 server_id: "local".to_string(),
                 display_name: "Desk Mac".to_string(),
                 host: "127.0.0.1".to_string(),
@@ -782,6 +845,7 @@ mod tests {
             preferred_codex_port: None,
             ssh_port_forwarding_enabled: None,
             websocket_url: None,
+            dev_tunnel_profile: None,
             remembered_by_user: true,
             detached_transport: false,
             alleycat_host: None,
@@ -805,6 +869,8 @@ mod tests {
         snapshot.servers.insert(
             "local".to_string(),
             ServerSnapshot {
+                dev_tunnel: None,
+                can_restart_app_server: false,
                 server_id: "local".to_string(),
                 display_name: "This Device".to_string(),
                 host: "127.0.0.1".to_string(),
@@ -838,6 +904,7 @@ mod tests {
             preferred_codex_port: None,
             ssh_port_forwarding_enabled: None,
             websocket_url: None,
+            dev_tunnel_profile: None,
             remembered_by_user: true,
             detached_transport: false,
             alleycat_host: None,
@@ -889,6 +956,7 @@ mod tests {
             preferred_codex_port: None,
             ssh_port_forwarding_enabled: None,
             websocket_url: None,
+            dev_tunnel_profile: None,
             remembered_by_user: true,
             detached_transport: false,
             alleycat_host: None,

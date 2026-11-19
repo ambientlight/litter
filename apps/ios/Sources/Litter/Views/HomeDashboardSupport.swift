@@ -102,6 +102,10 @@ struct HomeDashboardServer: Identifiable, Equatable {
     let agentRuntimes: [AgentRuntimeInfo]
     /// Saved by the user, so a connect in flight is a *re*connect.
     var isRemembered: Bool = false
+    var canRestartAppServer: Bool = false
+    var devTunnelSummary: String? = nil
+
+    var isDevTunnel: Bool { devTunnelSummary != nil || id.hasPrefix("dev-tunnel:") }
 
     /// Litter Quiet connection word shown beside the server name (Home
     /// server row, server list). Healthy servers show nothing.
@@ -123,6 +127,7 @@ struct HomeDashboardServer: Identifiable, Equatable {
     }
 
     var deduplicationKey: String {
+        if isDevTunnel { return id }
         if isLocal {
             return "local"
         }
@@ -151,6 +156,8 @@ struct HomeDashboardServer: Identifiable, Equatable {
             lhs.statusLabel == rhs.statusLabel &&
             lhs.statusDotState == rhs.statusDotState &&
             lhs.isRemembered == rhs.isRemembered &&
+            lhs.canRestartAppServer == rhs.canRestartAppServer &&
+            lhs.devTunnelSummary == rhs.devTunnelSummary &&
             lhs.agentRuntimes.map(agentRuntimeEqualityKey) == rhs.agentRuntimes.map(agentRuntimeEqualityKey)
     }
 }
@@ -256,7 +263,7 @@ enum HomeDashboardSupport {
     ) -> [HomeDashboardServer] {
         let rememberedIds = Set(savedServers.filter(\.rememberedByUser).map(\.id))
         let liveServers = servers
-            .filter { $0.health != .disconnected || $0.connectionProgress != nil }
+            .filter { $0.health != .disconnected || $0.connectionProgress != nil || $0.devTunnel != nil }
             .map { server in
                 HomeDashboardServer(
                     id: server.serverId,
@@ -270,7 +277,9 @@ enum HomeDashboardSupport {
                     statusColor: server.statusColor,
                     statusDotState: server.statusDotState,
                     agentRuntimes: server.agentRuntimes,
-                    isRemembered: rememberedIds.contains(server.serverId)
+                    isRemembered: rememberedIds.contains(server.serverId),
+                    canRestartAppServer: server.capabilities.canRestartAppServer,
+                    devTunnelSummary: server.devTunnel?.profile.connectionSummary
                 )
             }
 
@@ -323,11 +332,13 @@ enum HomeDashboardSupport {
             statusColor: AppServerHealth.disconnected.accentColor,
             statusDotState: reconnectPending && saved.source != .local ? .pending : .idle,
             agentRuntimes: savedAgentRuntimes(for: saved),
-            isRemembered: true
+            isRemembered: true,
+            devTunnelSummary: saved.devTunnelProfile.flatMap { try? decodeDevTunnelProfile(json: $0).connectionSummary }
         )
     }
 
     private static func sourceLabel(for saved: SavedServer) -> String {
+        if saved.devTunnelProfile != nil || saved.id.hasPrefix("dev-tunnel:") { return "Dev Tunnel" }
         if saved.alleycatAgentWire == "ssh-bridge" { return "ssh" }
         if saved.alleycatNodeId != nil { return "alleycat" }
         if saved.websocketURL != nil { return "remote" }

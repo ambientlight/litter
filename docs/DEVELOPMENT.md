@@ -158,6 +158,15 @@ Regenerate project if `apps/ios/project.yml` changed:
 make xcgen
 ```
 
+For a local signing team or bundle identifier, create the gitignored
+`apps/ios/project.local.yml` with `include: project.yml` and override the
+relevant target settings there. Project generation automatically uses this
+file when present; `IOS_PROJECT_SPEC=project.yml make xcgen` selects the
+canonical configuration. Override the phone, Live Activity, Watch, and Watch
+complication identifiers together, including the Watch target's
+`LITTER_COMPANION_BUNDLE_IDENTIFIER`. Local entitlement overrides belong in
+the same spec, so regeneration preserves the development configuration.
+
 Open in Xcode:
 
 ```bash
@@ -292,6 +301,11 @@ Anything else falls back to the previous re-parse, so the path is a pure speedup
 `StreamingAssistantRenderCacheTests.testAppendOnlyStreamMatchesColdParse` and
 `testStructuralAppendsMatchColdParse` assert that a streamed message renders exactly
 what a cold parse of the same text renders.
+
+## Private Dev Tunnels connections
+
+See [Microsoft Dev Tunnels](DEV_TUNNELS.md) for the dedicated Mac app-server
+setup, iOS connection flow, and physical-device integration tests.
 
 ## TestFlight (iOS)
 

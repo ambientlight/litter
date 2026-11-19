@@ -965,6 +965,7 @@ impl ServerSession {
         request: ClientRequest,
     ) -> Result<JsonValue, RpcError> {
         let wire_method = request.method_name();
+        let safe_read = remote_request_is_safe_read(wire_method);
         let (response_tx, response_rx) = oneshot::channel();
         let command_tx = self
             .runtime_command_txs
@@ -982,9 +983,13 @@ impl ServerSession {
             .await
             .map_err(|_| RpcError::Transport(TransportError::Disconnected))?;
 
-        response_rx
-            .await
-            .map_err(|_| RpcError::Transport(TransportError::Disconnected))?
+        response_rx.await.map_err(|_| {
+            if safe_read || self.config.is_local {
+                RpcError::Transport(TransportError::Disconnected)
+            } else {
+                RpcError::OutcomeUnknown
+            }
+        })?
     }
 
     /// Send a JSON-RPC request (constructed from method + params) and await the response.
@@ -1296,8 +1301,14 @@ async fn reconnect_remote_client(
                     "reconnect_failed url={} attempt={}/{} error={}",
                     websocket_url, attempt, REMOTE_RECONNECT_MAX_ATTEMPTS, error
                 ));
+                if matches!(&error, TransportError::DevTunnel(error) if !error.retryable()) {
+                    break;
+                }
                 if attempt < REMOTE_RECONNECT_MAX_ATTEMPTS {
-                    tokio::time::sleep(REMOTE_RECONNECT_DELAY).await;
+                    let jitter = u64::from(uuid::Uuid::new_v4().as_bytes()[0]);
+                    let delay = REMOTE_RECONNECT_DELAY * (1 << (attempt - 1).min(4))
+                        + Duration::from_millis(jitter);
+                    tokio::time::sleep(delay).await;
                 }
             }
         }
@@ -1609,6 +1620,9 @@ async fn remote_runtime_worker(
         tokio::select! {
             Some(completed) = requests.next(), if !requests.is_empty() => {
                 let (mut pending, result): (PendingRemoteRequest, Result<JsonValue, RpcError>) = completed;
+                let safe_read = remote_request_is_safe_read(pending.request.method_name());
+                let outcome_unknown = !safe_read
+                    && matches!(result, Err(RpcError::Transport(_) | RpcError::Timeout));
                 if matches!(result, Err(RpcError::Transport(_)))
                     && !pending.retried && !pending.response_tx.is_closed()
                 {
@@ -1622,14 +1636,14 @@ async fn remote_runtime_worker(
                     {
                         generation += 1;
                     }
-                    if pending.generation != generation {
+                    if safe_read && pending.generation != generation {
                         pending.generation = generation;
                         pending.retried = true;
                         requests.push(dispatch_remote_request(client.request_handle(), pending));
                         continue;
                     }
                 }
-                let _ = pending.response_tx.send(result);
+                let _ = pending.response_tx.send(if outcome_unknown { Err(RpcError::OutcomeUnknown) } else { result });
             }
             command = command_rx.recv() => {
                 let Some(command) = command else { break; };
@@ -1717,6 +1731,27 @@ struct PendingRemoteRequest {
     response_tx: oneshot::Sender<Result<JsonValue, RpcError>>,
     generation: u64,
     retried: bool,
+}
+
+/// Explicit allowlist: resume, turn/start, steer, approvals, command/exec and
+/// unknown future methods must never be replayed after an ambiguous response.
+pub(crate) fn remote_request_is_safe_read(method: &str) -> bool {
+    matches!(
+        method,
+        "account/read"
+            | "account/rateLimits/read"
+            | "model/list"
+            | "thread/list"
+            | "thread/read"
+            | "thread/turns/list"
+            | "thread/items/list"
+            | "config/read"
+            | "configRequirements/read"
+            | "skills/list"
+            | "mcpServerStatus/list"
+            | "app/list"
+            | "experimentalFeature/list"
+    )
 }
 
 async fn dispatch_remote_request(
@@ -1827,6 +1862,10 @@ fn route_in_process_event(
 
 #[cfg(test)]
 impl ServerSession {
+    pub(crate) fn test_set_health(&self, health: ConnectionHealth) {
+        self.health_tx.send_replace(health);
+    }
+
     pub(crate) fn test_stub_with_handlers(
         config: ServerConfig,
         request_handler: Option<TestRequestHandler>,
@@ -2007,6 +2046,8 @@ mod tests {
 
     enum TestJsonLineServer {
         DropOnFirstRequest,
+        AcceptMutationThenDrop(Arc<AtomicUsize>),
+        CountMutations(Arc<AtomicUsize>),
         Respond(JsonValue),
         SlowModels,
     }
@@ -2040,13 +2081,22 @@ mod tests {
             let _ = lines.next_line().await;
 
             match behavior {
+                TestJsonLineServer::AcceptMutationThenDrop(accepted) => {
+                    let line = lines.next_line().await.unwrap().unwrap();
+                    let request: JsonValue = serde_json::from_str(&line).unwrap();
+                    assert_eq!(request["method"], "turn/start");
+                    accepted.fetch_add(1, Ordering::SeqCst);
+                    // The host committed the turn, but its response is lost.
+                }
                 TestJsonLineServer::DropOnFirstRequest => {
                     // Consume one request and then close the stream without a
                     // response, simulating the app-server process/bridge dying
                     // after the mobile client has already enqueued an RPC.
                     let _ = lines.next_line().await;
                 }
-                TestJsonLineServer::Respond(_) | TestJsonLineServer::SlowModels => {
+                TestJsonLineServer::Respond(_)
+                | TestJsonLineServer::SlowModels
+                | TestJsonLineServer::CountMutations(_) => {
                     let writer = Arc::new(tokio::sync::Mutex::new(writer));
                     while let Ok(Some(line)) = lines.next_line().await {
                         let request: JsonValue = serde_json::from_str(&line)
@@ -2054,6 +2104,11 @@ mod tests {
                         let Some(id) = request.get("id").cloned() else {
                             continue;
                         };
+                        if let TestJsonLineServer::CountMutations(accepted) = &behavior {
+                            if request["method"] == "turn/start" {
+                                accepted.fetch_add(1, Ordering::SeqCst);
+                            }
+                        }
                         let slow = matches!(behavior, TestJsonLineServer::SlowModels)
                             && request["method"] == "model/list";
                         let response = match &behavior {
@@ -2279,6 +2334,99 @@ mod tests {
                 keepalive: None,
             })
         }
+    }
+
+    #[tokio::test]
+    async fn accepted_turn_with_lost_response_is_not_replayed_after_reconnect() {
+        struct CountingReconnect(Arc<AtomicUsize>);
+        #[async_trait]
+        impl RemoteTransport for CountingReconnect {
+            async fn reconnect(
+                &self,
+                _: &RemoteAppServerConnectArgs,
+                _: &str,
+            ) -> Result<Reconnected, TransportError> {
+                Ok(Reconnected {
+                    client: app_server_client_for_json_line_server(
+                        TestJsonLineServer::CountMutations(self.0.clone()),
+                        "mutation-reconnected",
+                    )
+                    .await,
+                    keepalive: None,
+                })
+            }
+        }
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let client = app_server_client_for_json_line_server(
+            TestJsonLineServer::AcceptMutationThenDrop(accepted.clone()),
+            "mutation-initial",
+        )
+        .await;
+        let (command_tx, command_rx) = mpsc::channel(4);
+        let (event_tx, _) = broadcast::channel(4);
+        let (health_tx, _) = watch::channel(ConnectionHealth::Connected);
+        let worker = tokio::spawn(remote_runtime_worker(
+            "codex".into(),
+            client,
+            None,
+            command_rx,
+            event_tx,
+            health_tx,
+            test_remote_args("mutation"),
+            "mutation".into(),
+            Some(Arc::new(CountingReconnect(accepted.clone()))),
+        ));
+        let (response_tx, response_rx) = oneshot::channel();
+        command_tx.send(SessionCommand::Request {
+            request: serde_json::from_value(json!({
+                "id": 1, "method": "turn/start", "params": {
+                    "threadId":"test-thread", "input":[{"type":"text","text":"test","text_elements":[]}]
+                }
+            })).unwrap(),
+            response_tx,
+        }).await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(3), response_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(result, Err(RpcError::OutcomeUnknown)),
+            "{result:?}"
+        );
+        // A subsequent read proves the new connection is usable without
+        // retransmitting the accepted mutation.
+        let (response_tx, response_rx) = oneshot::channel();
+        command_tx
+            .send(SessionCommand::Request {
+                request: serde_json::from_value(json!({"id":2,"method":"model/list","params":{}}))
+                    .unwrap(),
+                response_tx,
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), response_rx)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+        command_tx.send(SessionCommand::Shutdown).await.unwrap();
+        worker.await.unwrap();
+    }
+
+    #[test]
+    fn replay_allowlist_excludes_mutations_and_unknown_operations() {
+        for method in [
+            "turn/start",
+            "turn/steer",
+            "thread/resume",
+            "command/exec",
+            "account/login/start",
+            "future/read",
+        ] {
+            assert!(!remote_request_is_safe_read(method), "{method}");
+        }
+        assert!(remote_request_is_safe_read("thread/read"));
     }
 
     #[tokio::test]

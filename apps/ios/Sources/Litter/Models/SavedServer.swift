@@ -14,6 +14,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
     let preferredCodexPort: UInt16?
     let sshPortForwardingEnabled: Bool?
     let websocketURL: String?
+    let devTunnelProfile: String?
     let rememberedByUser: Bool
     /// Legacy Alleycat marker. Unsupported after the iroh-backed migration; kept so
     /// old records decode and can be treated as requiring a new QR scan.
@@ -37,6 +38,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
         preferredCodexPort: UInt16?,
         sshPortForwardingEnabled: Bool?,
         websocketURL: String?,
+        devTunnelProfile: String? = nil,
         rememberedByUser: Bool = false,
         alleycatHost: String? = nil,
         alleycatNodeId: String? = nil,
@@ -57,6 +59,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
         self.preferredCodexPort = preferredCodexPort
         self.sshPortForwardingEnabled = sshPortForwardingEnabled
         self.websocketURL = websocketURL
+        self.devTunnelProfile = devTunnelProfile
         self.rememberedByUser = rememberedByUser
         self.alleycatHost = alleycatHost
         self.alleycatNodeId = alleycatNodeId
@@ -79,6 +82,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
         case preferredCodexPort
         case sshPortForwardingEnabled
         case websocketURL
+        case devTunnelProfile
         case rememberedByUser
         case alleycatHost
         case alleycatNodeId
@@ -112,6 +116,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
             forKey: .sshPortForwardingEnabled
         )
         self.websocketURL = try container.decodeIfPresent(String.self, forKey: .websocketURL)
+        self.devTunnelProfile = try container.decodeIfPresent(String.self, forKey: .devTunnelProfile)
         self.rememberedByUser = try container.decodeIfPresent(Bool.self, forKey: .rememberedByUser) ?? true
         self.alleycatHost = try container.decodeIfPresent(String.self, forKey: .alleycatHost)
         self.alleycatNodeId = try container.decodeIfPresent(String.self, forKey: .alleycatNodeId)
@@ -135,6 +140,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
             wakeMAC: wakeMAC,
             sshPortForwardingEnabled: false,
             websocketURL: websocketURL,
+            devTunnelProfile: devTunnelProfile,
             preferredConnectionMode: migratedPreferredConnectionMode,
             preferredCodexPort: preferredCodexPort
         )
@@ -155,6 +161,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
             preferredCodexPort: server.preferredCodexPort,
             sshPortForwardingEnabled: nil,
             websocketURL: server.websocketURL,
+            devTunnelProfile: server.devTunnelProfile,
             rememberedByUser: rememberedByUser,
             alleycatHost: nil,
             alleycatNodeId: nil,
@@ -179,6 +186,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
             preferredCodexPort: preferredCodexPort,
             sshPortForwardingEnabled: sshPortForwardingEnabled,
             websocketURL: websocketURL,
+            devTunnelProfile: devTunnelProfile,
             rememberedByUser: rememberedByUser,
             alleycatHost: alleycatHost,
             alleycatNodeId: alleycatNodeId,
@@ -208,6 +216,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
             preferredCodexPort: preferredCodexPort,
             sshPortForwardingEnabled: sshPortForwardingEnabled,
             websocketURL: websocketURL,
+            devTunnelProfile: devTunnelProfile,
             rememberedByUser: rememberedByUser,
             alleycatHost: alleycatHost,
             alleycatNodeId: nodeId,
@@ -232,6 +241,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
             preferredCodexPort: preferredCodexPort,
             sshPortForwardingEnabled: sshPortForwardingEnabled,
             websocketURL: websocketURL,
+            devTunnelProfile: devTunnelProfile,
             rememberedByUser: rememberedByUser,
             alleycatHost: alleycatHost,
             alleycatNodeId: alleycatNodeId,
@@ -256,6 +266,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
             preferredCodexPort: preferredCodexPort,
             sshPortForwardingEnabled: sshPortForwardingEnabled,
             websocketURL: websocketURL,
+            devTunnelProfile: devTunnelProfile,
             rememberedByUser: rememberedByUser,
             alleycatHost: alleycatHost,
             alleycatNodeId: alleycatNodeId,
@@ -294,6 +305,7 @@ struct SavedServer: Codable, Identifiable, Equatable {
             preferredCodexPort: preferredCodexPort,
             sshPortForwardingEnabled: sshPortForwardingEnabled,
             websocketUrl: websocketURL,
+            devTunnelProfile: devTunnelProfile,
             rememberedByUser: rememberedByUser,
             detachedTransport: false,
             alleycatHost: alleycatHost,

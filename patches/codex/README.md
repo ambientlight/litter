@@ -13,6 +13,11 @@ Lets iOS install a function pointer that core's exec layer calls instead of `for
 
 Touches `core/src/exec.rs` and `core/src/unified_exec/{async_watcher.rs,process_manager.rs}`. The mobile hook retains upstream output buffering and transcript recording.
 
+The iOS-only early return also permits unused completion parameters on
+`exec_command_inner`; those parameters are used by the host-process path on
+other platforms. This keeps the iOS build compatible with upstream's
+deny-warnings policy without relaxing warnings on the host path.
+
 Consumed by `shared/rust-bridge/codex-mobile-client/src/ish_exec.rs` (`set_ios_exec_hook`), `android_exec.rs` (`set_android_tool_resolver`), and `shell_preflight.rs` (`set_mobile_exec_preflight`).
 
 ## Upstream 0.155.1 changes

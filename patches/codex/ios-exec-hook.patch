@@ -177,9 +177,10 @@ index 95b78eba..af644709 100644
          CodexErr::Io(io::Error::new(
              io::ErrorKind::InvalidInput,
 diff --git a/codex-rs/core/src/unified_exec/async_watcher.rs b/codex-rs/core/src/unified_exec/async_watcher.rs
+index ba91d724..7660dfb5 100644
 --- a/codex-rs/core/src/unified_exec/async_watcher.rs
 +++ b/codex-rs/core/src/unified_exec/async_watcher.rs
-@@ -48,7 +48,7 @@
+@@ -48,7 +48,7 @@ struct Emitter {
      call_id: String,
  }
  
@@ -188,7 +189,7 @@ diff --git a/codex-rs/core/src/unified_exec/async_watcher.rs b/codex-rs/core/src
      pending: Vec<u8>,
      transcript: Arc<Mutex<HeadTailBuffer>>,
      emitter: Emitter,
-@@ -246,8 +246,27 @@
+@@ -246,8 +246,27 @@ pub(crate) fn spawn_exit_watcher(
      });
  }
  
@@ -217,7 +218,7 @@ diff --git a/codex-rs/core/src/unified_exec/async_watcher.rs b/codex-rs/core/src
          const {
              assert!(
                  MAX_BYTES >= char::MAX.len_utf8(),
-@@ -292,7 +311,7 @@
+@@ -292,7 +311,7 @@ impl<const MAX_BYTES: usize> Buffer<MAX_BYTES> {
          while emitter.emit(&mut next_chunk).await {}
      }
  
@@ -227,9 +228,10 @@ diff --git a/codex-rs/core/src/unified_exec/async_watcher.rs b/codex-rs/core/src
              pending,
              transcript: _,
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
+index c04c1a89..383d602a 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
-@@ -55,6 +55,8 @@
+@@ -55,6 +55,8 @@ use crate::unified_exec::UnifiedExecError;
  use crate::unified_exec::UnifiedExecProcessManager;
  use crate::unified_exec::WriteStdinInteractionEvent;
  use crate::unified_exec::WriteStdinRequest;
@@ -238,7 +240,13 @@ diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/s
  use crate::unified_exec::async_watcher::emit_exec_end_for_unified_exec;
  use crate::unified_exec::async_watcher::emit_failed_exec_end_for_unified_exec;
  use crate::unified_exec::async_watcher::spawn_exit_watcher;
-@@ -501,6 +503,11 @@
+@@ -497,3 +499,5 @@ impl UnifiedExecProcessManager {
++    // iOS delegates to iSH before the host-process completion path below.
++    #[cfg_attr(target_os = "ios", allow(unused_mut, unused_variables))]
+     pub(super) async fn exec_command_inner(
+         &self,
+         request: ExecCommandRequest,
+@@ -501,6 +505,11 @@ impl UnifiedExecProcessManager {
          mut completion: Option<&mut Completion<'_>>,
      ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
          let cwd = request.cwd.clone();
@@ -250,7 +258,7 @@ diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/s
          let process = self
              .open_session_with_sandbox(&request, cwd.clone(), context)
              .await;
-@@ -814,6 +821,123 @@
+@@ -814,6 +823,123 @@ impl UnifiedExecProcessManager {
          Ok(response)
      }
  

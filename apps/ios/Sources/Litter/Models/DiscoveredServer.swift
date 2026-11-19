@@ -25,6 +25,7 @@ struct DiscoveredServer: Identifiable, Hashable {
     let wakeMAC: String?
     let sshPortForwardingEnabled: Bool
     let websocketURL: String?
+    let devTunnelProfile: String?
     let preferredConnectionMode: PreferredConnectionMode?
     let preferredCodexPort: UInt16?
     let os: String?
@@ -42,6 +43,7 @@ struct DiscoveredServer: Identifiable, Hashable {
         wakeMAC: String? = nil,
         sshPortForwardingEnabled: Bool = false,
         websocketURL: String? = nil,
+        devTunnelProfile: String? = nil,
         preferredConnectionMode: PreferredConnectionMode? = nil,
         preferredCodexPort: UInt16? = nil,
         os: String? = nil,
@@ -73,6 +75,7 @@ struct DiscoveredServer: Identifiable, Hashable {
         self.wakeMAC = Self.normalizeWakeMAC(wakeMAC)
         self.sshPortForwardingEnabled = sshPortForwardingEnabled
         self.websocketURL = websocketURL
+        self.devTunnelProfile = devTunnelProfile
         self.preferredConnectionMode = resolvedPreferredMode
         self.preferredCodexPort = resolvedPreferredCodexPort
         self.os = os
@@ -80,6 +83,9 @@ struct DiscoveredServer: Identifiable, Hashable {
     }
 
     var connectionTarget: ConnectionTarget? {
+        if devTunnelProfile != nil || id.hasPrefix("dev-tunnel:") {
+            return .devTunnel(profileJSON: devTunnelProfile ?? "")
+        }
         if source == .local { return .local }
         if let websocketURL, let url = URL(string: websocketURL) { return .remoteURL(url) }
         if preferredConnectionMode == .ssh {
@@ -136,6 +142,7 @@ struct DiscoveredServer: Identifiable, Hashable {
             wakeMAC: wakeMAC,
             sshPortForwardingEnabled: sshPortForwardingEnabled,
             websocketURL: websocketURL,
+            devTunnelProfile: devTunnelProfile,
             preferredConnectionMode: mode,
             preferredCodexPort: mode == .directCodex ? (codexPort ?? resolvedDirectCodexPort) : nil,
             os: os,
@@ -144,6 +151,7 @@ struct DiscoveredServer: Identifiable, Hashable {
     }
 
     var deduplicationKey: String {
+        if devTunnelProfile != nil || id.hasPrefix("dev-tunnel:") { return id }
         if source == .local {
             return "local"
         }

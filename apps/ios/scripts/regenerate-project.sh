@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_FILE="$PROJECT_DIR/Litter.xcodeproj"
 NESTED_PROJECT="$PROJECT_FILE/Litter.xcodeproj"
+PROJECT_SPEC="${IOS_PROJECT_SPEC:-project.yml}"
+if [[ -z "${IOS_PROJECT_SPEC:-}" && -f "$PROJECT_DIR/project.local.yml" ]]; then
+  PROJECT_SPEC="project.local.yml"
+fi
 REPAIR_ONLY=0
 
 while [[ $# -gt 0 ]]; do
@@ -43,9 +47,12 @@ if [[ "$REPAIR_ONLY" -eq 1 && "$needs_regen" -eq 0 ]]; then
 fi
 
 echo "==> Regenerating $PROJECT_FILE"
+# Every spec writes the same project. Invalidate previous selections, including
+# when this script is called directly instead of through Make.
+rm -f "$PROJECT_DIR/../../.build-stamps/xcgen" "$PROJECT_DIR/../../.build-stamps"/xcgen-*
 (
   cd "$PROJECT_DIR"
-  xcodegen generate --spec project.yml
+  xcodegen generate --spec "$PROJECT_SPEC" --project "$PROJECT_DIR"
 )
 
 if [[ -d "$NESTED_PROJECT" ]]; then

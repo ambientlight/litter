@@ -5,6 +5,7 @@ enum ConnectionTarget: Equatable {
     case local
     case remote(host: String, port: UInt16)
     case remoteURL(URL)
+    case devTunnel(profileJSON: String)
     case sshThenRemote(host: String, credentials: SSHCredentials)
 }
 

@@ -32,6 +32,8 @@ pub struct SavedServerRecord {
     pub preferred_codex_port: Option<u16>,
     pub ssh_port_forwarding_enabled: Option<bool>,
     pub websocket_url: Option<String>,
+    #[uniffi(default = None)]
+    pub dev_tunnel_profile: Option<String>,
     pub remembered_by_user: bool,
     pub detached_transport: bool,
     /// Legacy Alleycat marker. Unsupported after the iroh-backed host migration;
@@ -96,6 +98,11 @@ pub trait SlingshotCredentialProvider: Send + Sync {
 
 #[derive(Clone, Debug)]
 pub(crate) enum ReconnectPlan {
+    DevTunnel {
+        server_id: String,
+        display_name: String,
+        profile_json: String,
+    },
     Ssh {
         server_id: String,
         display_name: String,
@@ -296,6 +303,16 @@ pub(crate) fn compute_reconnect_plan_with_slingshot(
         return None;
     }
 
+    // Fail closed on malformed/missing profile data. A credential-free cached
+    // endpoint must never turn this record into an unauthenticated URL connect.
+    if server.dev_tunnel_profile.is_some() || server.id.starts_with("dev-tunnel:") {
+        return Some(ReconnectPlan::DevTunnel {
+            server_id: server.id.clone(),
+            display_name: server.name.clone(),
+            profile_json: server.dev_tunnel_profile.clone().unwrap_or_default(),
+        });
+    }
+
     // 2. Stable Alleycat pairing wins before legacy tunnel/direct transports.
     if multi_clanker_and_quic_enabled
         && let (Some(node_id), Some(token), Some(agent_name)) = (
@@ -423,6 +440,28 @@ pub(crate) async fn execute_reconnect_plan(
     client: &MobileClient,
 ) -> ReconnectResult {
     match plan {
+        ReconnectPlan::DevTunnel {
+            server_id,
+            display_name,
+            profile_json,
+        } => {
+            let result = async {
+                let mut profile =
+                    crate::dev_tunnels::decode_dev_tunnel_profile(profile_json.clone())?;
+                if profile.server_id() != *server_id {
+                    return Err(crate::dev_tunnels::DevTunnelError::InvalidProfile);
+                }
+                profile.display_name = display_name.clone();
+                client.reconnect_dev_tunnel(profile).await
+            }
+            .await;
+            ReconnectResult {
+                server_id: server_id.clone(),
+                success: result.is_ok(),
+                needs_local_auth_restore: false,
+                error_message: result.err().map(|error| error.to_string()),
+            }
+        }
         ReconnectPlan::Ssh {
             server_id,
             display_name,
@@ -1015,6 +1054,7 @@ mod tests {
             preferred_codex_port: None,
             ssh_port_forwarding_enabled: None,
             websocket_url: None,
+            dev_tunnel_profile: None,
             remembered_by_user: true,
             detached_transport: false,
             alleycat_host: None,
@@ -1035,6 +1075,21 @@ mod tests {
             private_key_pem: None,
             passphrase: None,
             unlock_macos_keychain: false,
+        }
+    }
+
+    #[test]
+    fn dev_tunnel_profiles_never_fall_back_to_cached_urls_or_ssh() {
+        for profile in [None, Some("malformed profile".to_string())] {
+            let mut server = base_server();
+            server.id = format!("dev-tunnel:{}", uuid::Uuid::new_v4());
+            server.dev_tunnel_profile = profile;
+            server.websocket_url = Some("wss://sample.usw2.devtunnels.ms/".into());
+            server.preferred_connection_mode = Some("ssh".into());
+            assert!(matches!(
+                compute_reconnect_plan(&server, Some(&ssh_credential()), false, true),
+                Some(ReconnectPlan::DevTunnel { .. })
+            ));
         }
     }
 

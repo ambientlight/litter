@@ -31,6 +31,8 @@ pub struct AppServerSnapshot {
     pub health: AppServerHealth,
     pub transport_state: AppServerTransportState,
     pub capabilities: AppServerCapabilities,
+    #[uniffi(default = None)]
+    pub dev_tunnel: Option<crate::dev_tunnels::DevTunnelStatus>,
     pub account: Option<crate::types::Account>,
     pub requires_openai_auth: bool,
     pub rate_limits: Option<crate::types::RateLimitSnapshot>,
@@ -61,6 +63,8 @@ pub enum AppServerTransportState {
 
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct AppServerCapabilities {
+    #[uniffi(default = false)]
+    pub can_restart_app_server: bool,
     pub can_use_transport_actions: bool,
     pub can_browse_directories: bool,
     pub can_start_threads: bool,
@@ -496,12 +500,14 @@ impl TryFrom<AppSnapshot> for AppSnapshotRecord {
                     health: server.health.into(),
                     transport_state,
                     capabilities: AppServerCapabilities {
+                        can_restart_app_server: server.can_restart_app_server,
                         can_use_transport_actions,
                         can_browse_directories: can_use_transport_actions,
                         can_start_threads: can_use_transport_actions,
                         can_resume_threads: can_use_transport_actions,
                         supports_turn_pagination,
                     },
+                    dev_tunnel: server.dev_tunnel,
                     account: server.account,
                     requires_openai_auth: server.requires_openai_auth,
                     rate_limits: server.rate_limits,

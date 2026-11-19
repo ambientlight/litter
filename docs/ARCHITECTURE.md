@@ -78,6 +78,14 @@ ARP discovery scan.
 wire abstraction used by the patched Codex app-server client. SSH bootstrap,
 reconnect policy and server normalization stay in Rust.
 
+The iOS Microsoft Dev Tunnels path uses an authenticated direct connection.
+`src/dev_tunnels/` owns verified GitHub identity, management discovery, protected
+credential lifecycle, versioned profiles, WebSocket keepalive, and reconnect
+generations. `AppClient` exposes typed operations; native code supplies protected
+storage and UI. Saved tunnel profiles never fall back to unauthenticated URLs.
+See [Dev Tunnels](DEV_TUNNELS.md) for setup, credential separation, recovery,
+and the initial iOS-only validation scope.
+
 ## Conversation lifecycle
 
 Thread lists populate summaries first. Activating a thread selects a

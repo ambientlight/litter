@@ -48,6 +48,8 @@ comma := ,
 IOS_SIM_UDID ?= $(shell xcrun simctl list devices booted 2>/dev/null | awk '/^-- iOS/{ios=1; next} /^-- /{ios=0} ios && /\(Booted\)/ { if (match($$0, /\([0-9A-F-]+\)/)) { print substr($$0, RSTART + 1, RLENGTH - 2); exit } }')
 IOS_SIM_DESTINATION ?= $(if $(IOS_SIM_UDID),platform=iOS Simulator$(comma)id=$(IOS_SIM_UDID),platform=iOS Simulator$(comma)name=$(IOS_SIM_DEVICE))
 IOS_SCHEME ?= Litter
+export IOS_PROJECT_SPEC ?= $(if $(wildcard $(IOS_DIR)/project.local.yml),project.local.yml,project.yml)
+IOS_PROJECT_SPEC_PATH := $(abspath $(if $(filter /%,$(IOS_PROJECT_SPEC)),$(IOS_PROJECT_SPEC),$(IOS_DIR)/$(IOS_PROJECT_SPEC)))
 XCODE_CONFIG ?= Debug
 CARGO_FEATURES ?=
 ANDROID_ABIS ?= arm64-v8a
@@ -175,7 +177,7 @@ STAMP_SYNC := $(STAMPS)/sync
 STAMP_BINDINGS_S := $(STAMPS)/bindings-swift
 STAMP_BINDINGS_K := $(STAMPS)/bindings-kotlin
 MATERIAL_SCHEMES_OUTPUT := $(ANDROID_DIR)/app/src/main/java/com/litter/android/ui/LitterMaterialSchemes.generated.kt
-STAMP_XCGEN := $(STAMPS)/xcgen
+STAMP_XCGEN := $(STAMPS)/xcgen-$(shell printf '%s' "$(IOS_PROJECT_SPEC_PATH)" | shasum -a 256 | cut -c1-12)
 UNIFFI_BINDINGS_HASH_SCRIPT := $(ROOT)/tools/scripts/uniffi-bindings-input-hash.sh
 
 # Mark generated Swift bindings current only when their content inputs changed
@@ -640,8 +642,9 @@ $(MATERIAL_SCHEMES_OUTPUT): $(MATERIAL_SCHEME_SOURCES)
 	@$(ROOT)/tools/scripts/generate-material-schemes.sh
 
 xcgen: $(STAMP_XCGEN)
-$(STAMP_XCGEN): $(IOS_DIR)/project.yml $(STAMP_BINDINGS_S) $(STAMP_ALPINE_FS)
+$(STAMP_XCGEN): $(IOS_DIR)/project.yml $(IOS_PROJECT_SPEC_PATH) $(IOS_SCRIPTS)/regenerate-project.sh $(STAMP_BINDINGS_S) $(STAMP_ALPINE_FS)
 	@echo "==> Regenerating Xcode project..."
+	@rm -f "$(STAMPS)/xcgen" "$(STAMPS)"/xcgen-*
 	@$(IOS_SCRIPTS)/regenerate-project.sh
 	@touch $@
 

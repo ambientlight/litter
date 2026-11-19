@@ -140,6 +140,11 @@ impl ServerBridge {
         display_name: String,
         websocket_url: String,
     ) -> Result<String, ClientError> {
+        if server_id.starts_with("dev-tunnel:") {
+            return Err(ClientError::InvalidParams(
+                "Dev Tunnels require their saved authentication profile".into(),
+            ));
+        }
         let parsed = url::Url::parse(&websocket_url)
             .map_err(|e| ClientError::InvalidParams(format!("invalid websocket URL: {e}")))?;
         let host = parsed

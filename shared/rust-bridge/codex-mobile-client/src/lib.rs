@@ -144,6 +144,7 @@ pub mod alleycat;
 pub mod cloud_sync;
 pub mod conversation;
 pub mod conversation_uniffi;
+pub mod dev_tunnels;
 pub mod ffi;
 mod home_cache;
 pub mod hydration;

@@ -9,6 +9,7 @@ struct ServerPill: View {
     let onRename: () -> Void
     let onRemove: () -> Void
     let onShowMountedFolders: () -> Void
+    @State private var showDevTunnelDetails = false
 
     /// Healthy servers show only their name. A server that needs attention
     /// (or is still connecting) adds one mono word.
@@ -19,6 +20,10 @@ struct ServerPill: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 6) {
+                if server.isDevTunnel {
+                    Image(systemName: "cloud")
+                        .foregroundStyle(LitterTheme.textSecondary)
+                }
                 Text(server.displayName)
                     .litterMonoFont(size: 13, weight: isSelected ? .semibold : .regular)
                     .foregroundStyle(isSelected ? LitterTheme.textPrimary : LitterTheme.textSecondary)
@@ -46,10 +51,19 @@ struct ServerPill: View {
             } label: {
                 Label("Reconnect", systemImage: "arrow.clockwise")
             }
-            Button {
-                onRestartAppServer()
-            } label: {
-                Label("Restart app server", systemImage: "arrow.triangle.2.circlepath")
+            if server.canRestartAppServer {
+                Button {
+                    onRestartAppServer()
+                } label: {
+                    Label("Restart app server", systemImage: "arrow.triangle.2.circlepath")
+                }
+            }
+            if server.isDevTunnel {
+                Button {
+                    showDevTunnelDetails = true
+                } label: {
+                    Label("Connection details", systemImage: "info.circle")
+                }
             }
             if server.isLocal {
                 Button {
@@ -71,12 +85,16 @@ struct ServerPill: View {
                 Label("Remove", systemImage: "trash")
             }
         }
+        .sheet(isPresented: $showDevTunnelDetails) {
+            DevTunnelDetailsView(serverId: server.id)
+        }
     }
 }
 
 extension ServerPill {
     fileprivate var accessibilityText: String {
         var parts = [server.displayName]
+        if let summary = server.devTunnelSummary { parts.append(summary) }
         if let problemWord { parts.append(problemWord.0) }
         let agents = server.agentRuntimes.filter(\.available).map(\.displayName)
         if !agents.isEmpty { parts.append(agents.joined(separator: ", ")) }

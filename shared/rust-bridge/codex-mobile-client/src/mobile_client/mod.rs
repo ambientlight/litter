@@ -35,6 +35,7 @@ use crate::types::{
 };
 use codex_app_server_protocol as upstream;
 
+mod dev_tunnels;
 mod dynamic_tools;
 mod event_loop;
 pub(crate) mod minigame;
@@ -58,6 +59,7 @@ pub use self::thread_projection::{
 /// auth, caching, and voice handoff into a single facade.
 /// All methods are safe to call from any thread (`Send + Sync`).
 pub struct MobileClient {
+    pub(crate) dev_tunnels: Arc<crate::dev_tunnels::DevTunnels>,
     pub(crate) sessions: Arc<RwLock<HashMap<String, Arc<ServerSession>>>>,
     pub(crate) event_processor: Arc<EventProcessor>,
     pub app_store: Arc<AppStoreReducer>,
@@ -810,6 +812,7 @@ impl MobileClient {
             event_processor.subscribe(),
         );
         Self {
+            dev_tunnels: Arc::new(crate::dev_tunnels::DevTunnels::new(Arc::clone(&app_store))),
             sessions,
             event_processor,
             app_store,
@@ -1395,23 +1398,6 @@ impl MobileClient {
 
     // ── Internal RPC helpers ──────────────────────────────────────────────
 
-    pub(crate) async fn server_get_account(
-        &self,
-        server_id: &str,
-        params: upstream::GetAccountParams,
-    ) -> Result<upstream::GetAccountResponse, crate::RpcClientError> {
-        use crate::{RpcClientError, next_request_id};
-        self.request_typed_for_server(
-            server_id,
-            upstream::ClientRequest::GetAccount {
-                request_id: upstream::RequestId::Integer(next_request_id()),
-                params,
-            },
-        )
-        .await
-        .map_err(RpcClientError::Rpc)
-    }
-
     pub(crate) async fn server_thread_fork(
         &self,
         server_id: &str,
@@ -1538,6 +1524,15 @@ impl MobileClient {
         );
         self.app_store
             .upsert_server(session.config(), ServerHealthSnapshot::Connected);
+        self.app_store.set_server_restart_capability(
+            server_id,
+            session.ssh_client().is_some()
+                || self
+                    .alleycat_restart_targets
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .contains_key(server_id),
+        );
         self.app_store
             .update_server_agent_runtimes(server_id, runtime_infos);
         self.sessions_write()
@@ -1581,6 +1576,11 @@ impl MobileClient {
     ///
     /// Returns the `server_id` from the config on success.
     pub async fn connect_remote(&self, config: ServerConfig) -> Result<String, TransportError> {
+        if config.server_id.starts_with("dev-tunnel:") {
+            return Err(TransportError::DevTunnel(
+                crate::dev_tunnels::DevTunnelError::InvalidProfile,
+            ));
+        }
         let server_id = config.server_id.clone();
         if self.existing_active_session(server_id.as_str()).is_some() {
             info!("MobileClient: reusing existing remote server session {server_id}");
@@ -2747,6 +2747,7 @@ impl MobileClient {
     /// Otherwise removing a disconnected server pill from the UI would be a
     /// no-op because the snapshot would still carry it.
     pub fn disconnect_server(&self, server_id: &str) {
+        self.dev_tunnels.cancel_connection(server_id);
         let session = self.sessions_write().remove(server_id);
         self.clear_direct_resume_markers_for_server(server_id);
         match self.alleycat_restart_targets.lock() {
@@ -2771,6 +2772,18 @@ impl MobileClient {
     }
 
     pub async fn restart_app_server(&self, server_id: &str) -> Result<(), TransportError> {
+        if !self
+            .app_store
+            .snapshot()
+            .servers
+            .get(server_id)
+            .is_some_and(|s| s.can_restart_app_server)
+        {
+            return Err(TransportError::ConnectionFailed(
+                "This connection cannot manage the host app-server. Restart it on the computer."
+                    .into(),
+            ));
+        }
         self.clear_oauth_callback_tunnel(server_id).await;
         let alleycat_restart_target = match self.alleycat_restart_targets.lock() {
             Ok(guard) => guard.get(server_id).cloned(),
@@ -2798,18 +2811,14 @@ impl MobileClient {
     }
 
     pub async fn sync_server_account(&self, server_id: &str) -> Result<(), RpcError> {
-        self.get_session(server_id)?;
-        let response = self
-            .server_get_account(
-                server_id,
-                upstream::GetAccountParams {
-                    refresh_token: false,
-                },
-            )
-            .await
-            .map_err(map_rpc_client_error)?;
-        self.apply_account_response(server_id, &response);
-        Ok(())
+        let session = self.get_session(server_id)?;
+        refresh_account_from_app_server(
+            session,
+            Arc::clone(&self.app_store),
+            Arc::clone(&self.sessions),
+            server_id,
+        )
+        .await
     }
 
     fn spawn_post_connect_warmup(&self, server_id: String, session: Arc<ServerSession>) {
@@ -3702,20 +3711,20 @@ impl MobileClient {
             .as_ref()
             .and_then(|t| t.active_turn_id.clone())
         {
+            let request = upstream::ClientRequest::TurnSteer {
+                request_id: upstream::RequestId::Integer(crate::next_request_id()),
+                params: upstream::TurnSteerParams {
+                    thread_id: params.thread_id.clone(),
+                    input: direct_params.input.clone(),
+                    responsesapi_client_metadata: None,
+                    expected_turn_id: active_turn_id,
+                    ..Default::default()
+                },
+            };
+            let runtime = self.runtime_for_request(server_id, &request);
             let steer_result = self
-                .request_typed_for_server::<upstream::TurnSteerResponse>(
-                    server_id,
-                    upstream::ClientRequest::TurnSteer {
-                        request_id: upstream::RequestId::Integer(crate::next_request_id()),
-                        params: upstream::TurnSteerParams {
-                            thread_id: params.thread_id.clone(),
-                            input: direct_params.input.clone(),
-                            responsesapi_client_metadata: None,
-                            expected_turn_id: active_turn_id,
-                            ..Default::default()
-                        },
-                    },
-                )
+                .get_session(server_id)?
+                .request_client_for_runtime(runtime, request)
                 .await;
             match steer_result {
                 Ok(_) => {
@@ -3723,8 +3732,16 @@ impl MobileClient {
                     // don't remove here so the user sees the queued preview.
                     return Ok(());
                 }
-                Err(_) => {
-                    // Turn not steerable or gone — fall through to turn/start.
+                Err(RpcError::Server { code: -32601, .. }) => {}
+                Err(RpcError::Server {
+                    code: -32600,
+                    ref message,
+                }) if message == "no active turn to steer" => {}
+                Err(error) => {
+                    // A lost steer response may already have injected the input.
+                    // Reconcile; never manufacture a second turn in that case.
+                    self.reconcile_transport_error(server_id, &error);
+                    return Err(error);
                 }
             }
         }

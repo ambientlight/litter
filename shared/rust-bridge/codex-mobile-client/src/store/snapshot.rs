@@ -179,6 +179,8 @@ pub struct ServerSnapshot {
     pub wake_mac: Option<String>,
     pub is_local: bool,
     pub health: ServerHealthSnapshot,
+    pub dev_tunnel: Option<crate::dev_tunnels::DevTunnelStatus>,
+    pub can_restart_app_server: bool,
     pub account: Option<Account>,
     pub requires_openai_auth: bool,
     pub rate_limits: Option<RateLimitSnapshot>,

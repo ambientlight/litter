@@ -696,6 +696,10 @@ struct ConversationInfoView: View {
                         .litterFont(size: 10)
                         .foregroundStyle(LitterTheme.textMuted)
                 }
+            case .external(let provider, let identity):
+                Text(identity.map { "\(provider) · \($0)" } ?? provider)
+                    .litterFont(size: 12)
+                    .foregroundStyle(LitterTheme.textSecondary)
             }
         }
     }

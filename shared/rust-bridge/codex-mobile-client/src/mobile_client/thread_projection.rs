@@ -458,14 +458,6 @@ pub(super) fn collaboration_mode_from_thread(
     })
 }
 
-pub(super) fn map_rpc_client_error(error: crate::RpcClientError) -> RpcError {
-    match error {
-        crate::RpcClientError::Rpc(message) | crate::RpcClientError::Serialization(message) => {
-            RpcError::Deserialization(message)
-        }
-    }
-}
-
 pub(super) fn map_ssh_transport_error(error: crate::ssh::SshError) -> TransportError {
     TransportError::ConnectionFailed(error.to_string())
 }
@@ -483,14 +475,10 @@ pub(super) async fn refresh_account_from_app_server(
         return Ok(());
     }
     let response =
-        serde_json::from_value::<upstream::GetAccountResponse>(response).map_err(|error| {
+        serde_json::from_value::<crate::types::AccountReadResponse>(response).map_err(|error| {
             RpcError::Deserialization(format!("deserialize account/read response: {error}"))
         })?;
-    app_store.update_server_account(
-        server_id,
-        response.account.map(Into::into),
-        response.requires_openai_auth,
-    );
+    app_store.update_server_account(server_id, response.account, response.requires_openai_auth);
     Ok(())
 }
 

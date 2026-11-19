@@ -9,6 +9,7 @@ struct DiscoveryView: View {
     @State private var showManualEntry = false
     @State private var alleycatPairingMode: AlleycatPairingMode?
     @State private var showSlingshotHosts = false
+    @State private var showDevTunnels = false
     @State private var slingshotEnvironments: [AppSlingshotEnvironment] = []
     @State private var slingshotIsLoading = false
     @State private var slingshotError: String?
@@ -91,6 +92,12 @@ struct DiscoveryView: View {
         }
         .sheet(isPresented: $showSlingshotHosts) {
             slingshotHostsSheet
+        }
+        .sheet(isPresented: $showDevTunnels) {
+            DevTunnelPickerView { server in
+                showDevTunnels = false
+                navigateAfterConnect(server)
+            }
         }
         .sheet(item: $alleycatPairingMode) { pairingMode in
             AlleycatAddServerSheet(
@@ -217,6 +224,18 @@ struct DiscoveryView: View {
                     showManualEntry = true
                 }
 
+                chooserCard(
+                    title: "Microsoft Dev Tunnels",
+                    subtitle: "Sign in with GitHub to connect to your computer’s private Codex tunnel.",
+                    badge: nil,
+                    icon: "network",
+                    supportedAgents: [AgentRuntimeKind.codex],
+                    isRecommended: false,
+                    accessibilityID: "discovery.chooser.dev-tunnels"
+                ) {
+                    showDevTunnels = true
+                }
+
                 Spacer(minLength: 8)
             }
             .padding(.horizontal, 20)
@@ -338,6 +357,16 @@ struct DiscoveryView: View {
         let startedAsyncBootstrap: Bool
         do {
             switch target {
+            case .devTunnel(let profileJSON):
+                startedAsyncBootstrap = false
+                var profile = try decodeDevTunnelProfile(json: profileJSON)
+                profile.displayName = server.name
+                let connected = try await appModel.client.connectDevTunnel(profile: profile)
+                connectedServerId = devTunnelServerId(profile: connected)
+                guard !Task.isCancelled, try SavedServerStore.updateDevTunnel(connected) else {
+                    connectingServer = nil
+                    return
+                }
             case .local:
                 startedAsyncBootstrap = false
                 connectedServerId = try await appModel.serverBridge.connectLocalServer(

@@ -108,18 +108,23 @@ struct SettingsView: View {
                     .environment(appState)
                     .environment(\.textScale, textScale)
                 case .edit(let server):
-                    SettingsServerConnectionEditor(
-                        server: server,
-                        onSave: { configuration in
-                            saveServerConfiguration(configuration, reconnect: false)
-                            activeServerSheet = nil
-                        },
-                        onReconnect: { configuration in
-                            activeServerSheet = nil
-                            saveServerConfiguration(configuration, reconnect: true)
-                        }
-                    )
-                    .environment(\.textScale, textScale)
+                    if server.isDevTunnel {
+                        DevTunnelDetailsView(serverId: server.id)
+                            .environment(\.textScale, textScale)
+                    } else {
+                        SettingsServerConnectionEditor(
+                            server: server,
+                            onSave: { configuration in
+                                saveServerConfiguration(configuration, reconnect: false)
+                                activeServerSheet = nil
+                            },
+                            onReconnect: { configuration in
+                                activeServerSheet = nil
+                                saveServerConfiguration(configuration, reconnect: true)
+                            }
+                        )
+                        .environment(\.textScale, textScale)
+                    }
                 case .sshReconnect(let server):
                     SSHLoginSheet(server: server) { target in
                         activeServerSheet = nil
@@ -182,6 +187,8 @@ struct SettingsView: View {
             return email.isEmpty ? "ChatGPT" : email
         case .apiKey?:
             return "API key"
+        case .external(let provider, let identity)?:
+            return identity ?? provider
         case nil:
             return "Not signed in"
         }
@@ -344,6 +351,12 @@ struct SettingsView: View {
                                 .litterFont(.body)
                                 .foregroundColor(LitterTheme.textPrimary)
                                 .lineLimit(1)
+                            if let summary = conn.devTunnelSummary {
+                                Text(summary)
+                                    .litterFont(.footnote)
+                                    .foregroundColor(LitterTheme.textSecondary)
+                                    .lineLimit(2)
+                            }
                             if let word = conn.connectionWord {
                                 Text(word.text)
                                     .litterFont(.footnote)
@@ -411,7 +424,12 @@ struct SettingsView: View {
     }
 
     private func removeServer(_ server: HomeDashboardServer) {
-        SavedServerStore.remove(serverId: server.id)
+        do {
+            try SavedServerStore.remove(serverId: server.id, client: appModel.client)
+        } catch {
+            serverEditError = devTunnelMessage(error)
+            return
+        }
         Task { await SshSessionStore.shared.close(serverId: server.id, ssh: appModel.ssh) }
         appModel.serverBridge.disconnectServer(serverId: server.id)
     }
@@ -444,6 +462,21 @@ struct SettingsView: View {
 
     private func reconnectServer(using configuration: SettingsServerConnectionConfiguration) {
         let server = configuration.discoveredServer
+
+        if case .devTunnel(let json) = server.connectionTarget {
+            Task {
+                do {
+                    var profile = try decodeDevTunnelProfile(json: json)
+                    profile.displayName = server.name
+                    let connected = try await appModel.client.connectDevTunnel(profile: profile)
+                    guard !Task.isCancelled, try SavedServerStore.updateDevTunnel(connected) else { return }
+                    await appModel.refreshSnapshot()
+                } catch {
+                    serverEditError = devTunnelMessage(error)
+                }
+            }
+            return
+        }
 
         // For SSH we keep the existing connection alive until the user actually
         // submits credentials, so a cancelled credential sheet does not leave
@@ -1193,7 +1226,7 @@ private struct SettingsConnectionAccountSection: View {
 
     private var authColor: Color {
         switch server.account {
-        case .chatgpt?, .apiKey?:
+        case .chatgpt?, .apiKey?, .external?:
             return LitterTheme.textSecondary
         case nil where server.isLocal && (hasStoredChatGPTTokens || hasStoredApiKey):
             return LitterTheme.meta
@@ -1208,6 +1241,8 @@ private struct SettingsConnectionAccountSection: View {
             return email.isEmpty ? "ChatGPT" : email
         case .apiKey?:
             return "API Key"
+        case .external(let provider, let identity)?:
+            return identity ?? provider
         case nil where server.isLocal && hasStoredChatGPTTokens:
             return "ChatGPT"
         case nil where server.isLocal && hasStoredApiKey:
@@ -1223,6 +1258,8 @@ private struct SettingsConnectionAccountSection: View {
             return "ChatGPT account"
         case .apiKey?:
             return "OpenAI API key"
+        case .external(let provider, _)?:
+            return provider
         case nil where server.isLocal && hasStoredChatGPTTokens:
             return "Stored locally; restoring session"
         case nil where server.isLocal && hasStoredApiKey:

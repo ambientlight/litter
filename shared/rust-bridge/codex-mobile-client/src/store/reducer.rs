@@ -359,6 +359,8 @@ impl AppStoreReducer {
                 existing_connection_progress,
                 existing_transport,
                 existing_turn_pagination_by_runtime,
+                existing_dev_tunnel,
+                can_restart_app_server,
             ) = if let Some(existing) = snapshot.servers.get(&config.server_id) {
                 (
                     existing.wake_mac.clone(),
@@ -371,6 +373,8 @@ impl AppStoreReducer {
                     existing.connection_progress.clone(),
                     existing.transport.clone(),
                     existing.turn_pagination_by_runtime.clone(),
+                    existing.dev_tunnel.clone(),
+                    existing.can_restart_app_server,
                 )
             } else {
                 (
@@ -389,6 +393,8 @@ impl AppStoreReducer {
                     None,
                     ServerTransportDiagnostics::default(),
                     HashMap::new(),
+                    None,
+                    config.is_local,
                 )
             };
             snapshot.servers.insert(
@@ -401,6 +407,8 @@ impl AppStoreReducer {
                     wake_mac: existing_wake_mac,
                     is_local: config.is_local,
                     health,
+                    dev_tunnel: existing_dev_tunnel,
+                    can_restart_app_server,
                     account: existing_account,
                     requires_openai_auth,
                     rate_limits: existing_rate_limits,
@@ -1593,6 +1601,31 @@ impl AppStoreReducer {
         }
         self.emit(AppStoreUpdateRecord::ServerChanged {
             server_id: server_id.to_string(),
+        });
+    }
+
+    pub fn update_dev_tunnel(&self, server_id: &str, status: crate::dev_tunnels::DevTunnelStatus) {
+        {
+            let mut snapshot = self.write_snapshot();
+            if let Some(server) = snapshot.servers.get_mut(server_id) {
+                server.dev_tunnel = Some(status);
+                server.can_restart_app_server = false;
+            }
+        }
+        self.emit(AppStoreUpdateRecord::ServerChanged {
+            server_id: server_id.into(),
+        });
+    }
+
+    pub fn set_server_restart_capability(&self, server_id: &str, supported: bool) {
+        {
+            let mut snapshot = self.write_snapshot();
+            if let Some(server) = snapshot.servers.get_mut(server_id) {
+                server.can_restart_app_server = supported;
+            }
+        }
+        self.emit(AppStoreUpdateRecord::ServerChanged {
+            server_id: server_id.into(),
         });
     }
 

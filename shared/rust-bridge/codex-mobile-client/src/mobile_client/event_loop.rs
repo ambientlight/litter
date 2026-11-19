@@ -255,6 +255,9 @@ impl MobileClient {
     }
 
     pub(super) fn reconcile_transport_error(&self, server_id: &str, error: &RpcError) {
+        if matches!(error, RpcError::OutcomeUnknown) {
+            run_post_reconnect_resubscribe(Arc::clone(&self.app_store), server_id.to_string());
+        }
         if matches!(error, RpcError::Transport(_)) {
             self.mark_server_transport_disconnected(server_id);
         }

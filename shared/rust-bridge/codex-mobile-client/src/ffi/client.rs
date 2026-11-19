@@ -1173,13 +1173,17 @@ impl AppClient {
         params: types::AppRefreshAccountRequest,
     ) -> Result<(), ClientError> {
         blocking_async!(self.rt, self.inner, |c| {
-            let response: upstream::GetAccountResponse = rpc(
+            let response: types::AccountReadResponse = rpc(
                 c.as_ref(),
                 &server_id,
                 req!(server_id, GetAccount, params.into()),
             )
             .await?;
-            c.apply_account_response(&server_id, &response);
+            c.app_store.update_server_account(
+                &server_id,
+                response.account,
+                response.requires_openai_auth,
+            );
             Ok(())
         })
     }
@@ -3027,6 +3031,8 @@ mod tests {
         health: ServerHealthSnapshot,
     ) -> ServerSnapshot {
         ServerSnapshot {
+            dev_tunnel: None,
+            can_restart_app_server: false,
             server_id: server_id.to_string(),
             display_name: server_id.to_string(),
             host: "127.0.0.1".to_string(),
